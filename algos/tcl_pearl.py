@@ -1,6 +1,8 @@
-"""CURL and CURLWorker in Pytorch.
+"""TCLPEARL and TCLPEARLWorker in Pytorch.
 
-Code is adapted from https://github.com/katerakelly/oyster.
+Code is adapted from https://github.com/rlworkgroup/garage
+which is originally adapted from https://github.com/katerakelly/oyster.
+
 """
 
 import copy
@@ -24,7 +26,7 @@ from garage.torch.policies import CurlPolicy
 
 
 class TCLPEARL(MetaRLAlgorithm):
-    """A PEARL model based on https://arxiv.org/abs/1903.08254.
+    """A TCL PEARL model, adapted and modified from garage codebase
 
     PEARL, which stands for Probablistic Embeddings for Actor-Critic
     Reinforcement Learning, is an off-policy meta-RL algorithm. It is built
@@ -138,9 +140,6 @@ class TCLPEARL(MetaRLAlgorithm):
                  replay_buffer_size=1000000,
                  reward_scale=1,
                  embedding_batch_in_sequence=False,
-                 contrastive_mean_only = False,
-                 new_contrastive_formula = False,
-                 new_weight_update = False,
                  encoder_common_net=True,
                  single_alpha = False,
                  use_task_index_label = False,
@@ -194,9 +193,6 @@ class TCLPEARL(MetaRLAlgorithm):
         self._sampler = sampler
         self._optimizer_class = optimizer_class
         # Architecture choice
-        self._contrastive_mean_only = contrastive_mean_only
-        self._new_contrastive_formula = new_contrastive_formula
-        self._new_weight_update = new_weight_update
         self._encoder_common_net = encoder_common_net
         self._single_alpha = single_alpha
         self._use_task_index_label = use_task_index_label
@@ -218,9 +214,6 @@ class TCLPEARL(MetaRLAlgorithm):
                                         output_dim=encoder_out_dim,
                                         common_network= self._encoder_common_net,
                                         hidden_sizes=encoder_hidden_sizes)
-        if self._contrastive_mean_only:
-            encoder_out_dim = self._latent_dim
-
         if not self._use_wasserstein_distance:
             self._contrastive_weight = torch.rand(encoder_out_dim, encoder_out_dim, device=global_device(), requires_grad=True)
 
@@ -281,7 +274,7 @@ class TCLPEARL(MetaRLAlgorithm):
                 self._context_encoder.networks[0].parameters(),
                 lr=self._context_lr,
             )
-        if self._new_weight_update and not self._use_wasserstein_distance:
+        if not self._use_wasserstein_distance:
             self.contrastive_weight_optimizer = self._optimizer_class(
                 [self._contrastive_weight],
                 lr=self._context_lr,
@@ -544,11 +537,6 @@ class TCLPEARL(MetaRLAlgorithm):
             # Using negative wasserstein distance for lower distance means more similar
             loss = loss_fun(-wasserstein_distance, labels)
         else:
-
-            if self._contrastive_mean_only:
-                assert self._contrastive_weight.size()[0] == self._latent_dim
-                query = query[:, :self._latent_dim]
-                key = key[:, :self._latent_dim]
             left_product = torch.matmul(query, self._contrastive_weight.to(global_device()))
             logits = torch.matmul(left_product, key.T)
             logits = logits - torch.max(logits, axis=1)[0]
@@ -560,35 +548,6 @@ class TCLPEARL(MetaRLAlgorithm):
             loss = loss_fun(logits, labels)
         return loss
 
-    def _compute_contrastive_loss(self, indices):
-        # Optimize CURL encoder
-        context_augs = self._sample_contrastive_pairs(indices, num_aug=2)
-        aug1 = torch.as_tensor(context_augs[0], device=global_device())
-        aug2 = torch.as_tensor(context_augs[1], device=global_device())
-        # path_batches = self.sample_path_batch(indices)
-
-        # similar_contrastive
-        query = self._context_encoder(aug1, query=True)
-        key = self._context_encoder(aug2, query=False)
-        t, b, d = query.size()
-        if self._contrastive_mean_only:
-            assert self._contrastive_weight.size()[0] == self._latent_dim
-            query = query[:, :self._latent_dim]
-            key = key[:, :self._latent_dim]
-        loss_fun = torch.nn.CrossEntropyLoss()
-        loss = None
-        for i in range(len(indices)):
-            left_product = torch.matmul(query[i], self._contrastive_weight.to(global_device()))
-            logits = torch.matmul(left_product, key[i].T)
-            logits = logits - torch.max(logits, axis=1)[0]
-            # labels = torch.arange(logits.shape[0]).to(global_device())
-            labels = torch.as_tensor(indices, device=global_device()).view(t, 1).repeat(1, b).view(t * b)
-            if not loss:
-                loss = loss_fun(logits, labels)
-            else:
-                loss += loss_fun(logits, labels)
-        return loss
-
     def _optimize_policy(self, indices):
         """Perform algorithm optimizing.
 
@@ -597,10 +556,7 @@ class TCLPEARL(MetaRLAlgorithm):
 
         """
         num_tasks = len(indices)
-        if self._new_contrastive_formula:
-            contrastive_loss = self._compute_contrastive_loss_new(indices)
-        else:
-            contrastive_loss = self._compute_contrastive_loss(indices)
+        contrastive_loss = self._compute_contrastive_loss_new(indices)
         context = self._sample_context(indices)
 
         # clear context and reset belief of policy
@@ -641,7 +597,7 @@ class TCLPEARL(MetaRLAlgorithm):
         if self._encoder_common_net:
             self.context_optimizer.zero_grad()
         self.query_optimizer.zero_grad()
-        if self._new_weight_update and not self._use_wasserstein_distance:
+        if not self._use_wasserstein_distance:
             self.contrastive_weight_optimizer.zero_grad()
 
         self.qf1_optimizer.zero_grad()
@@ -654,7 +610,7 @@ class TCLPEARL(MetaRLAlgorithm):
             if self._encoder_common_net:
                 self.context_optimizer.zero_grad()
             self.query_optimizer.zero_grad()
-            if self._new_weight_update and not self._use_wasserstein_distance:
+            if not self._use_wasserstein_distance:
                 self.contrastive_weight_optimizer.zero_grad()
 
         if self._use_kl_loss and self._use_information_bottleneck:
@@ -668,15 +624,12 @@ class TCLPEARL(MetaRLAlgorithm):
         if self._encoder_common_net:
             self.context_optimizer.step()
 
-        if self._new_weight_update and not self._use_wasserstein_distance:
+        if not self._use_wasserstein_distance:
             self.contrastive_weight_optimizer.step()
 
         query_net = self._context_encoder.get_query_net()
         key_net = self._context_encoder.get_key_net()
         with torch.no_grad():
-            if not self._new_weight_update:
-                self._contrastive_weight -= self._context_lr * self._contrastive_weight.grad
-                self._contrastive_weight.grad.zero_()
             # update key net with 0.05 of query net
             for target_param, param in zip(key_net.parameters(), query_net.parameters()):
                 target_param.data.copy_(self._soft_target_tau * param.data +

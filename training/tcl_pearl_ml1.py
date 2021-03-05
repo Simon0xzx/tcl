@@ -46,9 +46,6 @@ from garage.torch.q_functions import ContinuousMLPQFunction
 @click.option('--use_kl_loss', default=True, type=bool)
 @click.option('--use_q_loss', default=True, type=bool)
 
-@click.option('--contrastive_mean_only', default=True, type=bool)
-@click.option('--new_contrastive_formula', default=True, type=bool)
-@click.option('--new_weight_update', default=True, type=bool)
 @click.option('--encoder_common_net', default=True, type=bool)
 @click.option('--single_alpha', default=False, type=bool)
 @click.option('--use_task_index_label', default=False, type=bool)
@@ -83,9 +80,6 @@ def tcl_pearl_ml1(ctxt=None,
                   emphasized_network=False,
                   use_kl_loss=True,
                   use_q_loss=True,
-                  contrastive_mean_only=False,
-                  new_contrastive_formula=False,
-                  new_weight_update=False,
                   encoder_common_net=True,
                   single_alpha=False,
                   use_task_index_label = False,
@@ -191,9 +185,6 @@ def tcl_pearl_ml1(ctxt=None,
         embedding_batch_in_sequence=in_sequence_path_aug,
         use_kl_loss=use_kl_loss,
         use_q_loss=use_q_loss,
-        contrastive_mean_only=contrastive_mean_only,
-        new_contrastive_formula=new_contrastive_formula,
-        new_weight_update=new_weight_update,
         encoder_common_net=encoder_common_net,
         single_alpha=single_alpha,
         use_task_index_label=use_task_index_label,
